@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .layers import DynamicPathwayGate, BraakAwareAttention, PPIMaskedAttention
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class GeneAttentionNet(nn.Module):
     def __init__(self, num_genes, pathway_masks, ppi_mask):
         super().__init__()

@@ -30,6 +30,7 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate, devi
             loss = criterion(outputs, labels)
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.7)
             optimizer.step()
             
             train_loss += loss.item() * inputs.size(0)
@@ -64,7 +65,7 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate, devi
     plt.plot(train_losses, label="Training Losses")
     plt.plot(val_losses, label="Validation Losses")
     plt.xlabel("Epoch")
-    plt.ylable("Loss")
+    plt.ylabel("Loss")
     plt.legend()
     plt.title("Loss Curve")
 
@@ -120,9 +121,9 @@ def train():
     
     # Create pathway masks (placeholder - replace with real data)
     pathway_masks = {
-        'inflammation': torch.rand(num_genes) > 0.7,  # Example pathway
-        'apoptosis': torch.rand(num_genes) > 0.7,
-        'oxidative_stress': torch.rand(num_genes) > 0.7
+        'inflammation': (torch.rand(num_genes) > 0.7).to(device),  # Example pathway
+        'apoptosis': (torch.rand(num_genes) > 0.7).to(device),
+        'oxidative_stress': (torch.rand(num_genes) > 0.7).to(device)
     }
     
     # Create PPI mask (placeholder - replace with real PPI data)
