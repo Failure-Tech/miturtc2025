@@ -50,4 +50,4 @@ print(f"{X} \n {y}")
 X_df = pd.DataFrame(X)
 X_df["label"] = y
 
-X_df.to_csv("../processsed.csv", index=False)
+X_df.to_csv("./processsed.csv", index=False)

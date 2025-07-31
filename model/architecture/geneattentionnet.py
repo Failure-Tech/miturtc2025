@@ -6,25 +6,31 @@ from .layers import DynamicPathwayGate, BraakAwareAttention, PPIMaskedAttention
 class GeneAttentionNet(nn.Module):
     def __init__(self, num_genes, pathway_masks, ppi_mask):
         super().__init__()
-
-        self.embedding = nn.Linear(num_genes, 128) # using a simple projection lnayer first
-
-        # 2 attention ehads, ad genes head and data-driven head
+        self.num_genes = num_genes
+        
+        # Embedding layer
+        self.embedding = nn.Linear(num_genes, 128)
+        
+        # Dynamic pathway gate
         self.dynamic_gate = DynamicPathwayGate(num_genes, len(pathway_masks))
-        self.braak_attention = BraakAwareAttention(128)
-        self.graph_attention = PPIMaskedAttention(128, ppi_mask)
-
+        
+        # PPI projection layers
+        self.ppi_proj = nn.Linear(num_genes, self.num_genes*128)  # To gene space
+        self.ppi_proj_inv = nn.Linear(128, 128)  # Back to embedding space
+        
+        # Attention heads
         self.attention_heads = nn.ModuleList([
-            nn.MultiheadAttention(embed_dim=128, num_heads=1), # ad heads
-            nn.MultiheadAttention(embed_dim=128, num_heads=1), # data-drivien head
-            self.graph_attention # new ppi constrained attneiton ehad
+            nn.MultiheadAttention(embed_dim=128, num_heads=1),
+            nn.MultiheadAttention(embed_dim=128, num_heads=1),
+            PPIMaskedAttention(num_genes=num_genes, embed_dim=128, ppi_mask=ppi_mask)  # Operates in gene space
         ])
-
+        
+        # 4. Pathway scoring
         self.pathway_scorers = nn.ModuleList([
-            nn.Linear(128, 1) for name in pathway_masks.keys()
+            nn.Linear(128, 1) for _ in pathway_masks.keys()
         ])
-
-        # classifying them
+        
+        # 5. Classifier
         self.classifier = nn.Sequential(
             nn.Linear(128 + len(pathway_masks), 64),
             nn.ReLU(),
@@ -32,31 +38,60 @@ class GeneAttentionNet(nn.Module):
         )
 
     def forward(self, x, braak_stages=None):
-        x = self.embedding(x)
-
-        pathway_weights = self.dynamic_gate(x)
-
+        # Input shape: [batch_size, num_genes]
+        inputs = x
+        pathway_weights = self.dynamic_gate(x)  # [batch_size, num_pathways]
+        x = self.embedding(x)  # [batch_size, 128]
+        
+        # Get pathway weights
+        
+        # Process through attention heads
         attn_outputs = []
+        x_reshaped = x.unsqueeze(0)  # [1, batch_size, 128] for attention
+        
         for i, head in enumerate(self.attention_heads):
-            if i == 0:
-                attn_out, _ = head(x.unsqueeze(0), x.unsqueeze(0), x.unsqueeze(0))
-            elif i == 1 and braak_stages is not None:
-                attn_out = self.braak_attention(x, x, x, braak_stages)
+            if i == 0:  # Standard MultiheadAttention
+                attn_out, _ = head(x_reshaped, x_reshaped, x_reshaped)
+            elif i == 1:  # BraakAwareAttention
+                if braak_stages is not None:
+                    attn_out = self.braak_attention(x_reshaped, x_reshaped, x_reshaped, braak_stages)
+                else:
+                    attn_out = x_reshaped
+            else:  # PPIMaskedAttention (i == 2)
+                # Project to gene space for PPI mask
+                # x_proj = self.ppi_proj(inputs)  # [batch_size, num_genes * 128]
+                # x_proj = x_proj.view(-1, self.num_genes, 128)  # [batch_size, num_genes, 128]
+                # attn_out = head(x_proj)  # [batch_size, num_genes, 128]
+                # attn_out = torch.mean(attn_out, dim=1).unsqueeze(0)  # [1, batch_size, 128]
 
-            else:
-                attn_out = head(x.unsqueeze(0)).unsqueeze(0)
+                # attn_out = self.ppi_proj_inv(attn_out)  # [1, batch_size, 128]
+                # inputs shape: [batch_size, num_genes]
+                x_proj = self.ppi_proj(inputs)  # [batch_size, num_genes * 128]
+                x_proj = x_proj.view(-1, self.num_genes, 128)  # [batch_size, num_genes, 128]
+
+                attn_out = head(x_proj)  # Expect [batch_size, num_genes, 128]
+
+                attn_out = torch.mean(attn_out, dim=1)  # Average over genes -> [batch_size, 128]
+
+                attn_out = self.ppi_proj_inv(attn_out)  # [batch_size, 128]
+
+                attn_out = attn_out.unsqueeze(0)  # [1, batch_size, 128] to match other heads
+
             
-            attn_outputs.append(attn_out)
-
-            x = torch.mean(torch.stack(attn_outputs), dim=0)
-
-            pathway_scores = []
-            for i, (name, scorer) in enumerate(self.pathway_scorers.items()):
-                masked = x * pathway_weights[:, i].unsqueeze(1)
-                score = scorer(masked)
-                pathway_scores.append(score)
-
-            combined = torch.cat([x] + pathway_scores, dim=1)
-            logits = self.classifier(combined)
-
-            return logits.unsqueeze(-1), pathway_weights, x
+            attn_outputs.append(attn_out)  # [batch_size, 128]
+        
+        # Combine attention outputs
+        x = torch.mean(torch.stack(attn_outputs), dim=0).squeeze(0)  # [batch_size, 128]
+        
+        # Pathway scoring
+        pathway_scores = []
+        for i, scorer in enumerate(self.pathway_scorers):
+            masked = x * pathway_weights[:, i].unsqueeze(-1)
+            pathway_scores.append(scorer(masked))
+        
+        # Final classification
+        stacked_pathway_scores = torch.cat(pathway_scores, dim=1)
+        combined = torch.cat([x, stacked_pathway_scores], dim=1)
+        logits = self.classifier(combined)
+        
+        return logits, pathway_weights, x
