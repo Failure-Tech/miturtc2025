@@ -43,7 +43,12 @@ class GeneAttentionNet(nn.Module):
         # Input shape: [batch_size, num_genes]
         inputs = x
         pathway_weights = self.dynamic_gate(x)  # [batch_size, num_pathways]
+        if torch.isnan(pathway_weights).any():
+            print("NaN with pahtwayweights", flush=True)
+        
         x = self.embedding(x)  # [batch_size, 128]
+        if torch.isnan(x).any():
+            print("NaN with embedding output", flush=True)
         
         # Get pathway weights
         
@@ -69,9 +74,15 @@ class GeneAttentionNet(nn.Module):
                 # attn_out = self.ppi_proj_inv(attn_out)  # [1, batch_size, 128]
                 # inputs shape: [batch_size, num_genes]
                 x_proj = self.ppi_proj(inputs)  # [batch_size, num_genes * 128]
+                if torch.isnan(x_proj).any():
+                    print("NaN in ppi_proj output", flush=True)
                 x_proj = x_proj.view(-1, self.num_genes, 128)  # [batch_size, num_genes, 128]
+                if torch.isnan(x_proj).any():
+                    print("NaN after reshaping PPI", flush=True)
 
                 attn_out = head(x_proj)  # Expect [batch_size, num_genes, 128]
+                if torch.isnan(attn_out).any():
+                    print("NaN in PPI attention head", flush=True)
 
                 attn_out = torch.mean(attn_out, dim=1)  # Average over genes -> [batch_size, 128]
 

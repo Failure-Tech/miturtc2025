@@ -8,7 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 def train_model(model, train_loader, val_loader, num_epochs, learning_rate, device):
-    criterion = BCEWithLogitsLoss()
+    criterion = torch.nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     best_val_loss = float('inf')
     
@@ -23,10 +23,11 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate, devi
         print(f"\n Epoch {epoch+1}/{num_epochs} -----------------------------------------------", flush=True)
         for (inputs, labels) in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            
+                        
             optimizer.zero_grad()
             
             outputs, _, _ = model(inputs)
+            assert not torch.isnan(outputs).any(), "NaN in model outputs"
             loss = criterion(outputs, labels)
             
             loss.backward()
@@ -133,8 +134,8 @@ def train():
     # Initialize model
     model = GeneAttentionNet(
         num_genes=num_genes,
-        pathway_masks=pathway_masks,
-        ppi_mask=ppi_mask
+        # pathway_masks=pathway_masks,
+        # ppi_mask=ppi_mask
     ).to(device)
     
     # Load and split dataset
