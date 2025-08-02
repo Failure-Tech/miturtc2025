@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from matplotlib import pyplot as plt
 from torch.utils.data import random_split
-
+import os
+import pandas as pd
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embed_dim, num_heads):
         super().__init__()
@@ -172,6 +173,16 @@ if __name__ == "__main__":
         print(f"Epoch {epoch + 1}/{epochs}")
         print(f"Training Loss: {train_loss:.4f}, Training Accuracy: {train_acc:.4f}")
         print(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.4f}")
+
+    df = pd.DataFrame({
+        "Epoch": list(range(1, epochs+1)),
+        "Training Loss": train_losses,
+        "Validation Loss": validation_losses,
+        "Training Accuracy": train_accuracy,
+        "Validation Accuracy": validation_accuracy
+    })
+
+    df.to_csv("training_log.csv", index=False)
 
     plt.figure(figsize=(10, 4))
 
