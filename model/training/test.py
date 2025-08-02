@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from matplotlib import pyplot as plt
+from torch.utils.data import random_split
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embed_dim, num_heads):
@@ -30,7 +31,6 @@ class MultiHeadSelfAttention(nn.Module):
 
         attn_output = attn_output.permute(1, 2, 0, 3).reshape(batch_size, seq_len, embed_dim)  # [B, T, E]
         return self.out_proj(attn_output)
-
 
 class GeneAttentionNet(nn.Module):
     def __init__(self, num_genes, embed_dim=128, num_heads=4):
@@ -68,6 +68,30 @@ class GeneAttentionNet(nn.Module):
 
         logits = self.classifier(pooled)  # [B, 1]
         return logits
+    
+def validate_model(model, val_loader, criterion, device):
+    model.eval()
+    val_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for inputs, labels in val_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            val_loss += loss.item() * inputs.size(0)
+            preds = torch.sigmoid(outputs) > 0.5
+            correct += (preds == labels).sum().item()
+
+            total += labels.size(0)
+
+        val_loss = val_loss / len(val_loader.dataset)
+        val_acc = correct / total
+
+        return val_loss, val_acc
 
 if __name__ == "__main__":
     import torch
@@ -81,6 +105,7 @@ if __name__ == "__main__":
     batch_size = 32
     epochs = 100
     lr = 1e-4
+    val_split = 0.2
     data_path = "processsed.csv"  # <-- update this to your CSV file
 
     # Load dataset
@@ -90,35 +115,82 @@ if __name__ == "__main__":
         print("Failed to load dataset.")
         exit()
 
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    val_size = int(val_split * len(dataset))
+    train_size = len(dataset) - val_size
+
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     # Initialize model and training components
-    model = GeneAttentionNet(num_genes=num_genes)
+    model = GeneAttentionNet(num_genes=num_genes).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    train_loss = []
+    train_losses, validation_losses = [], []
+    train_accuracy, validation_accuracy = [], []
 
     # Training loop
-    model.train()
     for epoch in range(epochs):
-        total_loss = 0.0
-        for batch_x, batch_y in dataloader:
+        train_loss = 0.0
+        correct = 0
+        total = 0
+
+        model.train()
+
+        for batch_x, batch_y in train_loader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            # batch_y = batch_y.float().unsqueeze(1).to(device)
+
             optimizer.zero_grad()
             logits = model(batch_x)
             loss = criterion(logits, batch_y)
             loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.7) # remove if not necessary
             optimizer.step()
-            total_loss += loss.item()
 
-        avg_loss = total_loss / len(dataloader)
-        train_loss.append(avg_loss)
-        print(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f}")
+            train_loss += loss.item() * batch_x.size(0)
+            preds = torch.sigmoid(logits) > 0.5
+            correct += (preds == batch_y).sum().item()
+
+            total += batch_x.size(0)
+
+        train_loss = train_loss / len(train_loader)
+        train_acc = correct / total
+
+        val_loss, val_acc = validate_model(model, val_loader, criterion, device)
+
+        train_losses.append(train_loss)
+        train_accuracy.append(train_acc)
+        validation_losses.append(val_loss)
+        validation_accuracy.append(val_acc)
+
+        print(f"Epoch {epoch + 1}/{epochs}")
+        print(f"Training Loss: {train_loss:.4f}, Training Accuracy: {train_acc:.4f}")
+        print(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.4f}")
 
     plt.figure(figsize=(10, 4))
-    plt.plot(train_loss, label="Training Losses")
-    plt.xlabel("Epochs")
-    plt.ylabel("Losses")
+
+    plt.plot(train_losses, label="Training Losses")
+    plt.plot(validation_losses, label="Validation Losses")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
     plt.legend()
-    plt.savefig("test_fig.png")
+    plt.title("Loss Curve")
+    plt.tight_layout()
+    plt.savefig("loss_plot.png")
+    plt.show()
+
+    plt.plot(train_accuracy, label="Training Accuracy")
+    plt.plot(validation_accuracy, label="Validation Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.title("Accuracy Curve")
+    plt.tight_layout()
+    plt.savefig("accuracy_plot.png")
     plt.show()
